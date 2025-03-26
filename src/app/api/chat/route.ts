@@ -4,6 +4,8 @@ import { index } from '@/lib/pinecone';
 import { formatMessages } from '@/lib/utils';
 import { z } from 'zod';
 import { Citation } from '@/types';
+import axios from 'axios';
+import { redis } from '@/lib/redis';
 
 const chatRequestSchema = z.object({
   messages: z.array(z.object({
@@ -11,6 +13,7 @@ const chatRequestSchema = z.object({
     content: z.string(),
   })),
   query: z.string(),
+  recaptcha: z.string(),
 });
 
 export async function POST(req: NextRequest) {
@@ -20,8 +23,83 @@ export async function POST(req: NextRequest) {
     
     // Parse the request body
     const body = await req.json();
-    const { messages, query } = chatRequestSchema.parse(body);
+    const { messages, query, recaptcha } = chatRequestSchema.parse(body);
     console.log(`Chat API: Received query: "${query.substring(0, 50)}${query.length > 50 ? '...' : ''}"`);
+    
+    // Verify reCAPTCHA
+    try {
+      console.log('Chat API: Verifying reCAPTCHA');
+      const recaptchaResponse = await axios.post(
+        'https://www.google.com/recaptcha/api/siteverify',
+        null,
+        {
+          params: {
+            secret: process.env.RECAPTCHA_SECRET_KEY,
+            response: recaptcha,
+          },
+        }
+      );
+      
+      if (!recaptchaResponse.data.success) {
+        console.error('Chat API: reCAPTCHA verification failed', recaptchaResponse.data);
+        return NextResponse.json({
+          success: false,
+          message: { 
+            role: 'assistant', 
+            content: 'reCAPTCHA verification failed. Please try again.' 
+          },
+          error: 'reCAPTCHA verification failed'
+        }, { status: 400 });
+      }
+    } catch (recaptchaError) {
+      console.error('Chat API: Error verifying reCAPTCHA', recaptchaError);
+      return NextResponse.json({
+        success: false,
+        message: { 
+          role: 'assistant', 
+          content: 'Error verifying reCAPTCHA. Please try again.' 
+        },
+        error: 'Error verifying reCAPTCHA'
+      }, { status: 500 });
+    }
+    
+    // Check rate limit
+    const ip = req.headers.get('x-forwarded-for') || 'unknown';
+    const key = `rate_limit:${ip}`;
+    
+    try {
+      // Get current count
+      const count = await redis.get(key);
+      const currentCount = count ? parseInt(count as string) : 0;
+      
+      // Check if over limit
+      if (currentCount >= 100) {
+        console.log(`Chat API: Rate limit exceeded for IP ${ip}`);
+        return NextResponse.json({
+          success: false,
+          message: { 
+            role: 'assistant', 
+            content: 'You have reached the daily limit of 100 questions. Please try again tomorrow.' 
+          },
+          error: 'Rate limit exceeded',
+          rateLimitRemaining: 0
+        }, { status: 429 });
+      }
+      
+      // Increment count and set expiration (24 hours) if it's the first request
+      await redis.incr(key);
+      if (currentCount === 0) {
+        await redis.expire(key, 86400); // 24 hours in seconds
+      }
+      
+      // Calculate remaining requests
+      const remaining = 100 - (currentCount + 1);
+      console.log(`Chat API: Rate limit remaining for IP ${ip}: ${remaining}`);
+      
+    } catch (redisError) {
+      // Log rate limiting error but continue with request
+      console.error('Chat API: Error checking rate limit', redisError);
+    }
     
     // Simple fallback response in case Pinecone isn't working correctly
     // This ensures the chat UI remains functional even if vector search is down
@@ -30,7 +108,8 @@ export async function POST(req: NextRequest) {
       message: {
         role: 'assistant' as const,
         content: "I'm unable to search my knowledge base at the moment, but I can still try to help with general information about the University of Waterloo."
-      }
+      },
+      rateLimitRemaining: 100 // Default value, will be updated later
     };
     
     try {
@@ -72,6 +151,7 @@ export async function POST(req: NextRequest) {
             role: 'assistant',
             content: "I couldn't find specific information to answer your question. Please try asking something else about UWaterloo.",
           },
+          rateLimitRemaining: await getRemainingRequests(ip)
         });
       }
       
@@ -107,11 +187,18 @@ export async function POST(req: NextRequest) {
           content: completion.choices[0].message.content || '',
           citations,
         },
+        rateLimitRemaining: await getRemainingRequests(ip)
       });
     } catch (innerError) {
       // Log the inner error but continue to provide a fallback response
       console.error("Chat API inner error (Pinecone/OpenAI):", innerError);
-      return NextResponse.json(defaultResponse);
+      const response = { ...defaultResponse };
+      try {
+        response.rateLimitRemaining = await getRemainingRequests(ip);
+      } catch (error) {
+        console.error("Error getting rate limit:", error);
+      }
+      return NextResponse.json(response);
     }
   } catch (error) {
     console.error("Chat API outer error:", error);
@@ -123,5 +210,17 @@ export async function POST(req: NextRequest) {
       },
       error: error instanceof Error ? error.message : 'Unknown error',
     }, { status: 500 });
+  }
+}
+
+// Helper function to get remaining requests
+async function getRemainingRequests(ip: string): Promise<number> {
+  try {
+    const key = `rate_limit:${ip}`;
+    const count = await redis.get(key);
+    return count ? Math.max(0, 100 - parseInt(count as string)) : 100;
+  } catch (error) {
+    console.error("Error getting remaining requests:", error);
+    return 100; // Default to 100 if there's an error
   }
 } 

@@ -1,15 +1,45 @@
 'use client';
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import ReCAPTCHA from 'react-google-recaptcha';
 import { Message } from '@/types';
 
 export default function Chat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [captchaError, setCaptchaError] = useState<string | null>(null);
+  const [rateLimitRemaining, setRateLimitRemaining] = useState<number | null>(null);
+  const recaptchaRef = useRef<ReCAPTCHA>(null);
+
+  // Fetch rate limit info on component mount
+  useEffect(() => {
+    const fetchRateLimit = async () => {
+      try {
+        const response = await fetch('/api/rate-limit');
+        const data = await response.json();
+        if (data.success && data.remaining !== undefined) {
+          setRateLimitRemaining(data.remaining);
+        }
+      } catch (error) {
+        console.error('Error fetching rate limit:', error);
+      }
+    };
+    
+    fetchRateLimit();
+  }, [messages]); // Update after new messages are sent
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
+
+    // Verify reCAPTCHA
+    const recaptchaValue = recaptchaRef.current?.getValue();
+    if (!recaptchaValue) {
+      setCaptchaError('Please complete the reCAPTCHA verification');
+      return;
+    }
+    setCaptchaError(null);
+
     setLoading(true);
     const newMessage: Message = { role: 'user', content: input };
     setMessages((prev) => [...prev, newMessage]);
@@ -20,7 +50,11 @@ export default function Chat() {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: [...messages, newMessage], query: input }),
+        body: JSON.stringify({ 
+          messages: [...messages, newMessage], 
+          query: input,
+          recaptcha: recaptchaValue
+        }),
       });
       
       // Even if we get a non-200 response, try to parse the JSON first
@@ -54,6 +88,10 @@ export default function Chat() {
       // At this point we have a valid JSON response with 200 status
       if (data.success) {
         setMessages((prev) => [...prev, data.message]);
+        // Update remaining limit if provided
+        if (data.rateLimitRemaining !== undefined) {
+          setRateLimitRemaining(data.rateLimitRemaining);
+        }
       } else {
         // Show error to user
         setMessages((prev) => [...prev, { 
@@ -69,6 +107,7 @@ export default function Chat() {
       }]);
     } finally {
       setLoading(false);
+      recaptchaRef.current?.reset();
     }
   };
 
@@ -92,22 +131,42 @@ export default function Chat() {
           </div>
         )}
       </div>
-      <form onSubmit={handleSubmit} className="flex gap-2">
+      
+      
+      <form onSubmit={handleSubmit} className="flex flex-col gap-2">
         <input
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Ask a question about UWaterloo..."
           className="flex-1 p-2 border rounded bg-zinc-700 text-white placeholder-gray-400 border-zinc-600"
-          disabled={loading}
+          disabled={loading || rateLimitRemaining === 0}
         />
+        
+        <div className="my-2">
+          <ReCAPTCHA
+            ref={recaptchaRef}
+            sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY || ''}
+            theme="dark"
+          />
+          {captchaError && (
+            <div className="text-red-500 text-sm mt-1">{captchaError}</div>
+          )}
+        </div>
+        
         <button
           type="submit"
-          disabled={loading || !input.trim()}
+          disabled={loading || !input.trim() || rateLimitRemaining === 0}
           className="px-4 py-2 bg-blue-700 text-white rounded disabled:bg-zinc-600"
         >
           Send
         </button>
+        
+        {rateLimitRemaining === 0 && (
+          <div className="text-red-500 text-sm mt-1">
+            You've reached your daily limit of 100 questions. Please try again tomorrow.
+          </div>
+        )}
       </form>
     </div>
   );

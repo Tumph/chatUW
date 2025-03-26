@@ -57,14 +57,35 @@ The project is structured as follows:
 - `/src/types` - TypeScript type definitions
 - `/scripts` - Data processing scripts
 
-## Deployment
+## Deployment to Vercel
 
-The application can be deployed on Vercel:
+This application is configured to be deployed on Vercel. Follow these steps to deploy:
 
-```bash
-npm run build
-vercel deploy
-```
+1. Push your code to a GitHub repository
+2. Connect your repository to Vercel
+3. Add the following environment variables in the Vercel dashboard:
+   - `OPENAI_API_KEY`
+   - `PINECONE_API_KEY`
+   - `PINECONE_ENVIRONMENT`
+   - `PINECONE_INDEX`
+   - `PINECONE_HOST`
+   - `UPSTASH_REDIS_REST_URL`
+   - `UPSTASH_REDIS_REST_TOKEN`
+   - `NEXT_PUBLIC_RECAPTCHA_SITE_KEY`
+   - `RECAPTCHA_SECRET_KEY`
+4. Deploy the application
 
-Make sure to add the environment variables to your Vercel project.
+### Rate Limiting
+
+The application is configured to limit users to 100 chat requests per IP address per day. This is implemented using Upstash Redis. Make sure to set up a Redis database at [Upstash](https://upstash.com/) and add the appropriate environment variables.
+
+### reCAPTCHA
+
+The application uses Google reCAPTCHA v2 to prevent spam. You need to:
+
+1. Register your site at [Google reCAPTCHA](https://www.google.com/recaptcha/admin)
+2. Create a new reCAPTCHA v2 "I'm not a robot" Checkbox
+3. Add your domain to the list of approved domains
+4. Copy the Site Key and Secret Key to the environment variables
+
 # chatUW
