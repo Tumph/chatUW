@@ -1,7 +1,7 @@
 'use client';
 import { useState, useRef, useEffect } from 'react';
 import ReCAPTCHA from 'react-google-recaptcha';
-import { Message, Citation } from '@/types';
+import { Message} from '@/types';
 
 export default function Chat() {
   const [messages, setMessages] = useState<Message[]>([]);
