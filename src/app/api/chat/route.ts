@@ -26,41 +26,43 @@ export async function POST(req: NextRequest) {
     const { messages, query, recaptcha } = chatRequestSchema.parse(body);
     console.log(`Chat API: Received query: "${query.substring(0, 50)}${query.length > 50 ? '...' : ''}"`);
     
-    // Verify reCAPTCHA
-    try {
-      console.log('Chat API: Verifying reCAPTCHA');
-      const recaptchaResponse = await axios.post(
-        'https://www.google.com/recaptcha/api/siteverify',
-        null,
-        {
-          params: {
-            secret: process.env.RECAPTCHA_SECRET_KEY,
-            response: recaptcha,
-          },
+    // Verify reCAPTCHA only if it's provided
+    if (recaptcha) {
+      try {
+        console.log('Chat API: Verifying reCAPTCHA');
+        const recaptchaResponse = await axios.post(
+          'https://www.google.com/recaptcha/api/siteverify',
+          null,
+          {
+            params: {
+              secret: process.env.RECAPTCHA_SECRET_KEY,
+              response: recaptcha,
+            },
+          }
+        );
+        
+        if (!recaptchaResponse.data.success) {
+          console.error('Chat API: reCAPTCHA verification failed', recaptchaResponse.data);
+          return NextResponse.json({
+            success: false,
+            message: { 
+              role: 'assistant', 
+              content: 'reCAPTCHA verification failed. Please try again.' 
+            },
+            error: 'reCAPTCHA verification failed'
+          }, { status: 400 });
         }
-      );
-      
-      if (!recaptchaResponse.data.success) {
-        console.error('Chat API: reCAPTCHA verification failed', recaptchaResponse.data);
+      } catch (recaptchaError) {
+        console.error('Chat API: Error verifying reCAPTCHA', recaptchaError);
         return NextResponse.json({
           success: false,
           message: { 
             role: 'assistant', 
-            content: 'reCAPTCHA verification failed. Please try again.' 
+            content: 'Error verifying reCAPTCHA. Please try again.' 
           },
-          error: 'reCAPTCHA verification failed'
-        }, { status: 400 });
+          error: 'Error verifying reCAPTCHA'
+        }, { status: 500 });
       }
-    } catch (recaptchaError) {
-      console.error('Chat API: Error verifying reCAPTCHA', recaptchaError);
-      return NextResponse.json({
-        success: false,
-        message: { 
-          role: 'assistant', 
-          content: 'Error verifying reCAPTCHA. Please try again.' 
-        },
-        error: 'Error verifying reCAPTCHA'
-      }, { status: 500 });
     }
     
     // Check rate limit

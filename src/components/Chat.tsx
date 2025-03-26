@@ -1,13 +1,13 @@
 'use client';
 import { useState, useRef, useEffect } from 'react';
 import ReCAPTCHA from 'react-google-recaptcha';
-import { Message } from '@/types';
+import { Message, Citation } from '@/types';
 
 export default function Chat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [captchaError, setCaptchaError] = useState<string | null>(null);
+  const [isVerified, setIsVerified] = useState(false);
   const [rateLimitRemaining, setRateLimitRemaining] = useState<number | null>(null);
   const recaptchaRef = useRef<ReCAPTCHA>(null);
 
@@ -32,13 +32,14 @@ export default function Chat() {
     e.preventDefault();
     if (!input.trim()) return;
 
-    // Verify reCAPTCHA
-    const recaptchaValue = recaptchaRef.current?.getValue();
-    if (!recaptchaValue) {
-      setCaptchaError('Please complete the reCAPTCHA verification');
-      return;
+    if (!isVerified) {
+      const recaptchaValue = recaptchaRef.current?.getValue();
+      if (!recaptchaValue) {
+        alert('Please complete the reCAPTCHA');
+        return;
+      }
+      setIsVerified(true);
     }
-    setCaptchaError(null);
 
     setLoading(true);
     const newMessage: Message = { role: 'user', content: input };
@@ -53,7 +54,7 @@ export default function Chat() {
         body: JSON.stringify({ 
           messages: [...messages, newMessage], 
           query: input,
-          recaptcha: recaptchaValue
+          recaptcha: recaptchaRef.current?.getValue() || ''
         }),
       });
       
@@ -123,6 +124,11 @@ export default function Chat() {
           <div key={idx} className={`mb-4 p-3 rounded ${msg.role === 'user' ? 'bg-blue-900' : 'bg-zinc-700'}`}>
             <strong>{msg.role === 'user' ? 'You' : 'Assistant'}:</strong>
             <p className="whitespace-pre-wrap">{msg.content}</p>
+            {msg.citations?.map((citation, i) => (
+              <div key={i} className="text-sm text-gray-600">
+                [Citation: {citation.text.slice(0, 50)}...]
+              </div>
+            ))}
           </div>
         ))}
         {loading && (
@@ -143,16 +149,15 @@ export default function Chat() {
           disabled={loading || rateLimitRemaining === 0}
         />
         
-        <div className="my-2">
-          <ReCAPTCHA
-            ref={recaptchaRef}
-            sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY || ''}
-            theme="dark"
-          />
-          {captchaError && (
-            <div className="text-red-500 text-sm mt-1">{captchaError}</div>
-          )}
-        </div>
+        {!isVerified && (
+          <div className="my-2">
+            <ReCAPTCHA
+              ref={recaptchaRef}
+              sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY || ''}
+              theme="dark"
+            />
+          </div>
+        )}
         
         <button
           type="submit"
