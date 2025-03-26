@@ -164,7 +164,7 @@ export default function Chat() {
         
         {rateLimitRemaining === 0 && (
           <div className="text-red-500 text-sm mt-1">
-            You've reached your daily limit of 100 questions. Please try again tomorrow.
+            You&apos;ve reached your daily limit of 100 questions. Please try again tomorrow.
           </div>
         )}
       </form>
